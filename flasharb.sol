@@ -2,50 +2,42 @@ pragma solidity ^0.6.6;
 
 import 'https://github.com/Uniswap/v2-periphery/blob/master/contracts/libraries/UniswapV2Library.sol';
 import 'https://github.com/Uniswap/v2-periphery/blob/master/contracts/interfaces/IUniswapV2Router02.sol';
-// 'https://github.com/Uniswap/v2-core/blob/master/contracts/interfaces/IUniswapV2Pair.sol';
+import 'https://github.com/Uniswap/v2-core/blob/master/contracts/interfaces/IUniswapV2Callee.sol';
 import 'https://github.com/Uniswap/v2-core/blob/master/contracts/interfaces/IUniswapV2Factory.sol';
 import 'https://github.com/Uniswap/v2-core/blob/master/contracts/interfaces/IERC20.sol';
 
-contract FlashLoaner {
-  address immutable factory;
-  uint constant deadline = 2000;
-  IUniswapV2Router02 immutable sushiRouter;
+//interface IUniswapV2Callee {
+    //function uniswapV2Call(address sender, uint amount0, uint amount1, bytes calldata data) external;
+//}
 
-  constructor(address _factory, address _sushiRouter) public {
-    factory = _factory;  
-    sushiRouter = IUniswapV2Router02(_sushiRouter);
-  }
+contract TestUniswapFlashSwap is IUniswapV2Callee {
+    address private constant FACTORY = 0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f;
+    address private constant WETH = 0xc778417E063141139Fce010982780140Aa0cD5Ab;
+    function testFlashSwap(address _tokenBorrow, uint _amount) external {
+        address pair = IUniswapV2Factory(FACTORY).getPair(_tokenBorrow, WETH);
+        require(pair != address(0), "Pair!");
+        address token0 = IUniswapV2Pair(pair).token0();
+        address token1 = IUniswapV2Pair(pair).token1();
+        uint amount0Out = _tokenBorrow == token0 ? _amount : 0;
+        uint amount1Out = _tokenBorrow == token1 ? _amount : 0;
+        bytes memory data = abi.encode(_tokenBorrow, _amount);
+        IUniswapV2Pair(pair).swap(amount0Out, amount1Out, address(this), data);
+    }
+    function uniswapV2Call (address _sender, uint _anount0, uint _amount1, bytes calldata _data) external override {
+        address token0 = IUniswapV2Pair(msg.sender).token0();
+        address token1 = IUniswapV2Pair(msg.sender).token1();
+        address pair = IUniswapV2Factory(FACTORY).getPair(token0, token1);
+        require(msg.sender == pair, "Pair!");
+        (address tokenBorrow, uint amount) = abi.decode(_data, (address, uint));
 
-  function startArbitrage(address token0, address token1, uint amount0, uint amount1) external {
-    address pairAddress = IUniswapV2Factory(factory).getPair(token0, token1);
-    require(pairAddress != address(0), 'There is no such pool');
-    IUniswapV2Pair(pairAddress).swap(amount0, amount1, address(this), bytes('not empty'));
-  }  
+        //fee
+        uint fee = ((amount * 3) / 997) + 1;
+        uint amountToRepay = amount + fee;
 
-  function uniswapV2Call(address _sender, uint _amount0, uint _amount1, bytes calldata _data) external {
-      address[] memory path = new address[](2);
-      uint amountToken = _amount0 == 0 ? _amount1 : _amount0;
-      
-      address token0 = IUniswapV2Pair(msg.sender).token0();
-      address token1 = IUniswapV2Pair(msg.sender).token1();
+        IERC20(tokenBorrow).transfer(pair, amountToRepay);
+    }
 
-      require(msg.sender == UniswapV2Library.pairFor(factory, token0, token1), "Unauthorized"); 
-      require(_amount0 == 0 || _amount1 == 0);
-
-      path[0] = _amount0 == 0 ? token1 : token0;
-      path[1] = _amount0 == 0 ? token0 : token1;
-
-      IERC20 token = IERC20(_amount0 == 0 ? token1 : token0);
-      
-      token.approve(address(sushiRouter), amountToken);
-
-      // no need for require() check, if amount required is not sent sushiRouter will revert
-      uint amountRequired = UniswapV2Library.getAmountsIn(factory, amountToken, path)[0];
-      uint d_line = block.timestamp + deadline;
-      uint amountReceived = sushiRouter.swapExactTokensForTokens(amountToken, amountRequired, path, msg.sender, d_line)[1];
-
-      // YEAHH PROFIT
-      token.transfer(_sender, amountReceived - amountRequired);
-    
-  }
 }
+
+
+
